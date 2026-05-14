@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/cover.png" alt="OncoBoard.ai" width="720" />
+  <img src="docs/assets/cover.png" alt="OncoBoard.ai" width="300" />
 </p>
 
 <h1 align="center">OncoBoard.ai</h1>
