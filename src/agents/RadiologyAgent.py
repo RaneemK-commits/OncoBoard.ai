@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 
-import aiosqlite
+import asyncpg
+import httpx
 from pydantic import BaseModel, ValidationError
 
 from src.agents.base import BaseAgent
@@ -18,6 +20,39 @@ from src.db import repository as repo
 from src.db.models import Case
 
 _MAX_TILES = 5
+
+
+def _is_accessible(path: str) -> bool:
+    if path.startswith(("http://", "https://")):
+        return True
+    return os.path.isfile(path)
+
+
+async def _resolve_image_paths(paths: list[str]) -> tuple[list[str], list[str]]:
+    """Return (local_paths, temp_file_paths_to_clean_up).
+
+    URL paths are downloaded to named temp files. Local paths are returned as-is.
+    Inaccessible URLs are silently dropped.
+    """
+    local: list[str] = []
+    tmp: list[str] = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for path in paths:
+            if path.startswith(("http://", "https://")):
+                try:
+                    r = await client.get(path)
+                    r.raise_for_status()
+                    suffix = ".jpg" if path.lower().endswith((".jpg", ".jpeg")) else ".png"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+                        tf.write(r.content)
+                        tmp.append(tf.name)
+                        local.append(tf.name)
+                except Exception:
+                    pass
+            else:
+                local.append(path)
+    return local, tmp
+
 
 _SYSTEM = (
     "You are a breast-specialized radiologist reviewing imaging for a tumor board. "
@@ -46,13 +81,12 @@ class RadiologyAgent(BaseAgent[BiRadsFindings]):
     output_schema = BiRadsFindings
 
     async def run(
-        self, db: aiosqlite.Connection, case: Case, *, run_id: str
+        self, db: asyncpg.Connection, case: Case, *, run_id: str
     ) -> BiRadsFindings:
         files = await repo.list_case_files(db, case.case_id)
 
         mri = [f for f in files if f.file_type == "mri_patch"]
-        svs = [f for f in files if f.file_type == "svs_patch"]
-        candidates = mri or svs
+        candidates = mri
 
         # One tile per series up to _MAX_TILES
         seen_series: set[str | None] = set()
@@ -64,12 +98,8 @@ class RadiologyAgent(BaseAgent[BiRadsFindings]):
                 if len(sampled_paths) >= _MAX_TILES:
                     break
 
-        accessible = [p for p in sampled_paths if os.path.isfile(p)]
-        modalities: list[str] = []
-        if mri:
-            modalities.append("MRI")
-        if svs:
-            modalities.append("H&E Whole Slide (SVS patch)")
+        accessible = [p for p in sampled_paths if _is_accessible(p)]
+        modalities: list[str] = ["MRI"] if mri else []
 
         clinical_ctx = (
             f"Patient: {case.age_at_diagnosis or 'unknown'} yo, "
@@ -103,12 +133,20 @@ class RadiologyAgent(BaseAgent[BiRadsFindings]):
                 "and list the missing files as data_gaps."
             )
 
-        resp = await self.call_gemini(
-            prompt=prompt,
-            system_instruction=_SYSTEM,
-            response_schema=BiRadsFindings,
-            image_paths=accessible or None,
-        )
+        local_paths, tmp_files = await _resolve_image_paths(accessible)
+        try:
+            resp = await self.call_gemini(
+                prompt=prompt,
+                system_instruction=_SYSTEM,
+                response_schema=BiRadsFindings,
+                image_paths=local_paths or None,
+            )
+        finally:
+            for tf in tmp_files:
+                try:
+                    os.unlink(tf)
+                except OSError:
+                    pass
 
         try:
             payload = json.loads(resp.text)

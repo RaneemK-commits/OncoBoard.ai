@@ -6,11 +6,12 @@ eligibility delta for the patient. Returns structured trial matches.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
 
-import aiosqlite
+import asyncpg
 import httpx
 from pydantic import BaseModel, ValidationError
 
@@ -71,7 +72,7 @@ class TrialAgent(BaseAgent[TrialOutput]):
     output_schema = TrialOutput
 
     async def run(
-        self, db: aiosqlite.Connection, case: Case, *, run_id: str
+        self, db: asyncpg.Connection, case: Case, *, run_id: str
     ) -> TrialOutput:
         settings = get_settings()
         search_criteria: dict[str, Any] = {
@@ -84,8 +85,10 @@ class TrialAgent(BaseAgent[TrialOutput]):
         }
 
         async with httpx.AsyncClient(timeout=15.0, headers=_HTTP_HEADERS) as client:
-            trials_data = await self._fetch_trials(client, settings.clinicaltrials_base_url, case)
-            pubmed_ids = await self._search_pubmed(client, settings.pubmed_base_url, case)
+            trials_data, pubmed_ids = await asyncio.gather(
+                self._fetch_trials(client, settings.clinicaltrials_base_url, case),
+                self._search_pubmed(client, settings.pubmed_base_url, case),
+            )
             pubmed_refs = await self._fetch_pubmed_summaries(client, settings.pubmed_base_url, pubmed_ids)
 
         trial_summaries = self._extract_trial_summaries(trials_data)

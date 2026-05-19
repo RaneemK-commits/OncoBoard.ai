@@ -19,7 +19,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, AsyncIterator
 
-import aiosqlite
+import asyncpg
 
 from src.agents.CaseCompiler import CaseCompiler
 from src.agents.gemini_client import GeminiClient
@@ -30,6 +30,7 @@ from src.agents.RadiologyAgent import RadiologyAgent
 from src.agents.SummaryAgent import SummaryAgent
 from src.agents.TrialAgent import TrialAgent
 from src.agents.types import AgentError
+from src.db.connection import connect
 from src.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -48,7 +49,7 @@ class PipelineEvent:
 
 
 async def run_pre_meeting(
-    db: aiosqlite.Connection,
+    db: asyncpg.Connection,
     case_id: str,
     *,
     gemini: GeminiClient | None = None,
@@ -97,7 +98,8 @@ async def run_pre_meeting(
 
     async def _run_and_enqueue(ag) -> None:
         try:
-            result = await ag.execute(db, case_id, run_id=run_id)
+            async with connect() as agent_db:
+                result = await ag.execute(agent_db, case_id, run_id=run_id)
             await queue.put(PipelineEvent("agent", ag.name, "done", run_id, result.model_dump()))
         except Exception as exc:
             await queue.put(PipelineEvent("agent", ag.name, "error", run_id, {"error": str(exc)}))

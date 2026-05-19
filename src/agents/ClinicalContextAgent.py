@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-import aiosqlite
+import asyncpg
 
 from src.agents.gemini_client import GeminiClient, get_gemini_client
 from src.db import repository as repo
@@ -61,7 +61,7 @@ class ClinicalContextAgent:
 
     async def chat(
         self,
-        db: aiosqlite.Connection,
+        db: asyncpg.Connection,
         case_id: str,
         messages: list[dict],  # [{"role": "user"|"assistant", "content": str}, ...]
         phase: Phase = "pre",
@@ -77,7 +77,7 @@ class ClinicalContextAgent:
 
     # ── private ───────────────────────────────────────────────────────────────
 
-    async def _build_context(self, db: aiosqlite.Connection, case_id: str, phase: Phase) -> str:
+    async def _build_context(self, db: asyncpg.Connection, case_id: str, phase: Phase) -> str:
         parts: list[str] = []
 
         # Clinical record
@@ -93,12 +93,10 @@ class ClinicalContextAgent:
 
         # Mid/post: session transcripts
         if phase in ("mid", "post"):
-            # Find the most recent session for this case
-            cur = await db.execute(
-                "SELECT session_id FROM sessions WHERE case_id = ? ORDER BY started_at DESC LIMIT 1",
-                (case_id,),
+            row = await db.fetchrow(
+                "SELECT session_id FROM sessions WHERE case_id = $1 ORDER BY started_at DESC LIMIT 1",
+                case_id,
             )
-            row = await cur.fetchone()
             if row:
                 session_id = row["session_id"]
                 transcripts = await repo.list_transcripts(db, session_id)
@@ -108,11 +106,12 @@ class ClinicalContextAgent:
 
         # Post: actions
         if phase == "post":
-            cur = await db.execute(
-                "SELECT a.owner, a.description, a.due_date, a.status FROM actions a JOIN sessions s ON a.session_id = s.session_id WHERE s.case_id = ? ORDER BY a.created_at",
-                (case_id,),
+            rows = await db.fetch(
+                "SELECT a.owner, a.description, a.due_date, a.status FROM actions a "
+                "JOIN sessions s ON a.session_id = s.session_id "
+                "WHERE s.case_id = $1 ORDER BY a.created_at",
+                case_id,
             )
-            rows = await cur.fetchall()
             if rows:
                 action_lines = [
                     f"- [{r['status']}] {r['description']} → {r['owner']} (due {r['due_date']})"
