@@ -9,164 +9,128 @@
 <p align="center">
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white">
-  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white">
   <img alt="Google Gemini" src="https://img.shields.io/badge/Google_Gemini-8E75B2?logo=google&logoColor=white">
   <img alt="Vue.js 3" src="https://img.shields.io/badge/Vue.js_3-4FC08D?logo=vuedotjs&logoColor=white">
+  <img alt="Vercel" src="https://img.shields.io/badge/Deployed_on-Vercel-000000?logo=vercel&logoColor=white">
   <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg">
-  <img alt="Status" src="https://img.shields.io/badge/Status-Research%20Prototype-orange">
 </p>
 
 ---
 
-## What this is
+**Live demo:** [https://onco-board-ai.vercel.app/](https://onco-board-ai.vercel.app/)
 
-Breast cancer tumor boards are where multidisciplinary specialists decide treatment for each patient — and they typically take **eight hours of preparation per case**. OncoBoard.ai runs a coordinated team of AI agents that compiles the case, surfaces guidelines, finds matching trials, retrieves analogous past cases, transcribes the meeting, and drafts the note.
-
-**Clinicians make every decision.** The agents just remove the eight hours of busywork.
-
-> **From 8 hours to 90 seconds.**
+> Built for the **[AI Agent Olympics Hackathon](https://lablab.ai/ai-hackathons/milan-ai-week-hackathon)** by Lablab.ai — Google DeepMind track.
 
 ---
 
-## How it works
+## The Problem
 
-Three phases, fourteen specialist agents, three explicit human gates that are hard stops in the pipeline.
+Preparing a single breast cancer case for a multidisciplinary tumor board takes **eight hours** of manual work — pulling records, checking guidelines, searching trials, writing a summary. OncoBoard.ai runs a coordinated team of AI agents that does all of it in under 8 minutes.
 
-### 1. Pre-Meeting — seven agents run in parallel
-Before the board convenes, agents pull the patient record, interpret the imaging in BI-RADS language, read the genomic + biopsy data, match NCCN/ESMO guidelines, find recruiting clinical trials, retrieve analogous past cases by semantic similarity, and synthesize everything into a one-page case narrative.
-**→ Human Gate 1: Review & Approve.**
-
-### 2. During Meeting — live capture
-The display agent formats the prepared case for the room in real time. A transcription agent turns live audio into a speaker-tagged transcript. A recommendation agent reads the transcript stream and captures decision moments as the consensus emerges.
-**→ Human Gate 2: Consensus Confirmed.**
-
-### 3. Post-Meeting — note + action items
-A note-draft agent produces a structured tumor board note ready for EHR entry. An action-dispatch agent extracts follow-ups, assigns owners, and sets due dates. A follow-up agent tracks completion and escalates overdue items. A scheduling agent flags cases needing re-presentation.
-**→ Human Gate 3: Approve Note.**
+**Clinicians make every decision. The agents remove the busywork.**
 
 ---
 
-## Agent roster
+## Multi-Agent Pipeline
 
-| Phase | Agent | Model | Role |
+The system is organized into three phases with a hard human gate between each.
+
+### Pre-Meeting — 7 agents, run in parallel
+
+| Agent | Role |
+|---|---|
+| `CaseCompiler` | Pulls the patient record, flags missing data |
+| `RadiologyAgent` | Imaging findings in BI-RADS radiologist language |
+| `PathologyAgent` | Biopsy + genomic interpretation in CAP synoptic format |
+| `GuidelineAgent` | NCCN / ESMO protocol match for stage + receptor status |
+| `TrialAgent` | ClinicalTrials.gov recruiting trials + PubMed evidence, matched on receptor status, stage, and prior treatment |
+| `HistoryCaseAgent` | Analogous past cases by clinical profile similarity (RAG — see below) |
+| `SummaryAgent` | One-page structured clinical narrative from all agent outputs |
+
+**→ Human Gate 1: Clinician reviews and approves before the board.**
+
+### During Meeting — live capture
+
+| Agent | Role |
+|---|---|
+| `DisplayAgent` | Formats the prepared case for real-time display in the room |
+| `TranscriptionAgent` | Live audio → speaker-tagged transcript |
+| `RecommendationAgent` | Reads the transcript stream, captures decision moments as consensus forms |
+
+**→ Human Gate 2: Consensus confirmed.**
+
+### Post-Meeting — note + follow-up
+
+| Agent | Role |
+|---|---|
+| `NoteDraftAgent` | Structured tumor board note ready for EHR entry |
+| `ActionDispatchAgent` | Extracts action items, assigns owners, sets due dates |
+| `FollowUpAgent` | Tracks completion, escalates overdue items |
+| `SchedulingAgent` | Flags cases needing re-presentation |
+
+**→ Human Gate 3: Clinician approves the note.**
+
+---
+
+## RAG — Clinical Chat
+
+A key feature of OncoBoard.ai is the **in-board chat**, powered by `ClinicalContextAgent`. During any phase of the tumor board, a clinician can ask a question in plain language and get an answer grounded strictly in the current patient's data.
+
+On every question, the agent assembles a full context window from everything in the DB for that case — the clinical record, all agent outputs, the live transcript, and action items — and passes it to Gemini Pro. The answer is always derived from that retrieved context, never from LLM memory or general knowledge.
+
+This means a radiologist can ask *"what did the pathology show?"*, a surgeon can ask *"is this patient eligible for the MONARCH trial?"*, and a coordinator can ask *"what actions are still open?"* — all without leaving the board view. The agent never fabricates data and never makes a treatment recommendation.
+
+---
+
+## Tech Stack
+
+| Layer | Choice |
+|---|---|
+| API | FastAPI + Server-Sent Events (agent output is server → client; SSE avoids WebSocket complexity) |
+| LLM | Google Gemini — Pro for clinical interpretation, Flash for structured extraction, Vision for imaging |
+| Frontend | Vue.js 3 + Pinia |
+| Data | TCGA-BRCA (Kaggle) — 1,097 patients, clinical + genomic + imaging columns |
+
+---
+
+## Deployment
+
+The app is live at **[https://onco-board-ai.vercel.app/](https://onco-board-ai.vercel.app/)**.
+
+Two branches serve different environments:
+
+| Branch | Environment | Database | Storage |
 |---|---|---|---|
-| Pre | `CaseCompiler` | deterministic · no LLM | Pulls records, flags missing data |
-| Pre | `RadiologyAgent` | Vision | Imaging findings in BI-RADS |
-| Pre | `PathologyAgent` | Pro | Biopsy + genomic interpretation (CAP synoptic format) |
-| Pre | `GuidelineAgent` | Pro | NCCN / ESMO protocol match |
-| Pre | `TrialAgent` | Flash | ClinicalTrials.gov + PubMed eligibility match |
-| Pre | `HistoryCaseAgent` | Pro + embeddings | Analogous past cases by semantic similarity |
-| Pre | `SummaryAgent` | Flash | One-page clinical narrative |
-| Live | `DisplayAgent` | deterministic · no LLM | Real-time case display to the room (formatting only) |
-| Live | `TranscriptionAgent` | Flash | Speaker-tagged transcript |
-| Live | `RecommendationAgent` | Pro | Decision-moment capture |
-| Post | `NoteDraftAgent` | Pro | Tumor board note |
-| Post | `ActionDispatchAgent` | Flash | Action items + owners + due dates |
-| Post | `FollowUpAgent` | Flash | Overdue-item tracking |
-| Post | `SchedulingAgent` | Flash | Re-presentation flagging |
+| `master` | Local development | SQLite (aiosqlite) | Local filesystem |
+| `vercel-deployment` | Vercel production | Vercel Postgres | Vercel Blob |
+
+The `vercel-deployment` branch replaces SQLite with Vercel Postgres and local file storage with Vercel Blob, plus minor backend adjustments for the serverless runtime. Feature parity is maintained across both.
 
 ---
 
-## Quickstart
+## Quickstart (local)
 
-```powershell
+```bash
 git clone https://github.com/RaneemK-commits/OncoBoard.ai.git
 cd OncoBoard.ai
 
-# Virtualenv + deps
 python -m venv .venv
-.\.venv\Scripts\pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt        # Linux/macOS
+# .\.venv\Scripts\pip install -r requirements.txt  # Windows
 
-# Environment
-cp .env.example .env       # fill GEMINI_API_KEY, or set GEMINI_MOCK=1 for offline dev
+cp .env.example .env   # set GEMINI_API_KEY, or GEMINI_MOCK=1 for offline dev
 
-# Initialize the DB and seed with synthetic data (4 hand-crafted cases, instant)
-.\.venv\Scripts\python.exe -m src.db.init_db
-.\.venv\Scripts\python.exe -m src.data.seed_synthetic
+# Seed the DB (choose one)
+python -m src.db.init_db
+python -m src.data.seed_synthetic        # 4 hand-crafted cases, instant
+# python -m src.data.seed_tcga           # 1,097 TCGA-BRCA cases (needs Kaggle CSVs)
 
-# OR seed the real TCGA-BRCA dataset (~1,097 cases, needs Kaggle CSVs in data/raw/)
-.\.venv\Scripts\python.exe -m src.data.seed_tcga
-
-# Run the API
 uvicorn src.main:app --reload
-# GET http://localhost:8000/health -> {"status":"ok"}
-```
-
-Dataset download instructions: [`src/data/README.md`](src/data/README.md).
-
----
-
-## Project structure
-
-```
-src/
-  agents/          # Agent framework: BaseAgent, GeminiClient, MockGeminiClient
-  api/             # FastAPI routes (Stage 5)
-  data/            # Seed scripts + synthetic fixtures + subtype classifier
-  db/              # Schema, Pydantic models, repository (all raw SQL lives here)
-  config.py        # pydantic-settings Settings
-  logging_setup.py # JSON structured logger
-  main.py          # FastAPI app factory
-docs/
-  BUILD_LOG.md     # Stage-by-stage history with smoke-test commands
-  assets/          # Cover art and other static images
-scripts/           # One-off smoke tests per stage
-frontend/          # Vue.js 3 app (separate workstream)
-ARCHITECTURE.md    # System diagram + components + key decisions
-CLAUDE.md          # Project conventions for AI collaborators
-Branding.md        # Design tokens — colors, typography, spacing
+# http://localhost:8000/health → {"status":"ok"}
 ```
 
 ---
 
-## Build status
+## Disclaimer
 
-| Stage | Theme | Status |
-|---|---|---|
-| 1 | Backend foundation (config, logging, FastAPI app) | ✅ |
-| 2 | DB layer (schema, models, repository, init) | ✅ |
-| 3 | Data seeding (synthetic + TCGA-BRCA) | ✅ |
-| 4 | Agent framework (BaseAgent + MockGeminiClient) | ✅ |
-| 5 | Vertical slice: CaseCompiler + SummaryAgent + SSE route | ✅ |
-| 6 | Test infrastructure (pytest + mocked Gemini) | ✅ |
-| — | Post-plan: CI on push, all 14 agents, post-meeting phase + human gates | ✅ |
-
-Backend is feature-complete: all 14 agents across pre/during/post-meeting, 3 human gates, 78 CI-gated tests. Full stage-by-stage detail — file lists, decisions, verify commands — in [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md).
-
----
-
-## Tech stack
-
-| Layer | Choice | Why |
-|---|---|---|
-| API | FastAPI + Server-Sent Events | Agent output is strictly server → client; SSE avoids WebSocket complexity |
-| DB | SQLite (aiosqlite) | Fixed ~1,000-case research corpus; trivially deployable; one-line switch to Postgres if it scales |
-| LLM | Google Gemini (Pro / Flash / Vision) | Tiered per agent — Pro for clinical interpretation, Flash for structured extraction |
-| Frontend | Vue.js 3 + Pinia | Three views map 1:1 to the three pipeline phases |
-| Data | TCGA-BRCA (Kaggle) | Public research dataset — ~1,097 patients with clinical + genomic + imaging |
-
-Trade-offs documented in [`ARCHITECTURE.md`](ARCHITECTURE.md) §4.
-
----
-
-## Important: this is a research prototype
-
-OncoBoard.ai is **not** clinical software. It has no HIPAA infrastructure, no real EHR integration, no DICOM/PACS connectivity, no authentication, and no audit logging beyond development-grade tracing. The genomic data is research-grade — not clinical-grade (e.g. Foundation Medicine FoundationOne CDx). The history-case lookup runs against the same public dataset, not a hospital's own prior decisions.
-
-**Do not use with real patient data.** The full limitations list is in [`ARCHITECTURE.md`](ARCHITECTURE.md) §5.
-
----
-
-## Documentation
-
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System diagram, components, key decisions, limitations
-- [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) — What's landed, when, why, how to verify
-- [`src/data/README.md`](src/data/README.md) — Dataset download + seed instructions
-- [`Branding.md`](Branding.md) — Design tokens (colors, typography, spacing) for the frontend
-- [`CLAUDE.md`](CLAUDE.md) — Conventions for AI collaborators contributing to this codebase
-
----
-
-## License
-
-MIT — see [`LICENSE`](LICENSE).
+OncoBoard.ai is a **research prototype**.
